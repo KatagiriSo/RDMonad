@@ -102,6 +102,19 @@ func >>=<E,T,U>(left:@escaping Environment<E,T>, right:@escaping (T)->Environmen
     return environment
 }
 
+func ask<E>(e:E) -> E {
+    return e
+}
+
+func local<E,T>(modify:@escaping ((E)->E), env:@escaping Environment<E,T>) -> Environment<E,T> {
+    let environment = {(e:E) -> T in
+        env(modify(e))
+    }
+    
+    return environment
+}
+
+
 let count:Int = 0
 
 func hello(x:String)->Environment<Int,String> {
@@ -140,6 +153,8 @@ let helloEnv = hello(x: "poi")
 let mathEnv = math(input: "hoge")
 
 let result = hello(x: "poi") >>= math
+let result2 = local(modify: {e in 0},env: hello(x: "poi")) >>= math
+
 
 print("helloEnv(0) == \(helloEnv(0))")
 print("helloEnv(1) == \(helloEnv(1))")
@@ -152,6 +167,105 @@ print("mathEnv(2) == \(mathEnv(2))")
 print("result(0) == \(result(0))")
 print("result(1) == \(result(1))")
 print("result(2) == \(result(2))")
+
+print("result2(0) == \(result2(0))")
+print("result2(1) == \(result2(1))")
+print("result2(2) == \(result2(2))")
+
+
+
+// Maybe Monad
+
+enum Maybe<T> {
+    case just(T)
+    case nothing
+}
+
+func >>=<T,U>(left:Maybe<T>, right:(T)->Maybe<U>) -> Maybe<U> {
+    switch left {
+    case .nothing:
+        return .nothing
+    case let .just(t):
+        return right(t)
+    }
+}
+
+func add(_ str:Maybe<String>, _ str2:Maybe<String>) -> Maybe<String> {
+    
+    if case .just(let t1) = str, case .just(let t2) = str2 {
+        let res = t1 + t2
+        if res.lengthOfBytes(using: .utf8) > 10 {
+            return .nothing
+        } else {
+            return .just(res)
+        }
+    }
+
+    return .nothing
+}
+
+func oddNumber(x:Int) -> Maybe<Int> {
+    if x % 2 == 1 {
+        return .just(x)
+    } else {
+        return .nothing
+    }
+}
+
+let m = Maybe.just(1000) >>= oddNumber
+let m2 = Maybe.just(1001) >>= oddNumber
+
+print("1000 = \(m)")
+print("1001 = \(m2)")
+
+
+
+// State Monad
+
+
+typealias State<S,T> = (S) -> (T,S)
+
+func unit<S,T>(_ t:T) -> State<S,T> {
+    return {(s:S)->(T,S) in (t,s)}
+}
+
+func >>=<S,T,U>(left:@escaping State<S,T>, right:@escaping (T) -> State<S,U>) -> State<S,U> {
+    
+    return {s in
+        let (t,ss) = left(s)
+        let stateMon = right(t)
+        let ret = stateMon(ss)
+        return ret
+    }
+}
+
+func add1(x:Int) -> State<Int,Int> {
+    return {(s:Int) in
+        let xx = x + s
+        let ss = s + 1
+        return (xx,ss)
+    }
+}
+
+var state:State<Int,Int> = unit(0) // value
+
+print(state(2)) // state 2
+print(state(5)) // state 5
+
+let re = state >>= add1
+
+print("re(1) = \(re(1))")
+print("re(2) = \(re(2))")
+print("re(3) = \(re(3))")
+
+let re2 = (state >>= add1) >>= add1
+
+print("re2(1) = \(re2(1))")
+print("re2(2) = \(re2(2))")
+print("re2(3) = \(re2(3))")
+
+
+
 
 
 
