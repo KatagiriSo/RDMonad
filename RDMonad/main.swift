@@ -13,7 +13,7 @@ typealias CallBack<R> = (R)->Void
 typealias Process<R> = (CallBack<R>)->Void
 
 
-func unit<T>(t:T) -> Process<T> {
+func unit<T>(_ t:T) -> Process<T> {
     func process(callBack:CallBack<T>) {
         callBack(t)
     }
@@ -40,32 +40,34 @@ struct SomeRecord {
     let title:String
 }
 
+
+// CPS
+func getUIDs(callBack:CallBack<[SomeUID]>) {
+    let uids:[SomeUID] = [SomeUID(uid:"AX"),SomeUID(uid:"BC")]
+    callBack(uids)
+}
+
+// CPS
+func getRecords(uids:[SomeUID],callBack:CallBack<[SomeRecord]>) {
+    // async...
+    let records:[SomeRecord] = uids.map {uid in
+                SomeRecord(title:"\(uid)'-record")
+    }
+    
+    callBack(records)
+}
+
+
 func getUIDs() -> Process<[SomeUID]> {
-    func report(uids:[SomeUID], callBack:CallBack<[SomeUID]>) -> Void {
-        callBack(uids)
-    }
-    
-    func proc(callBack:CallBack<[SomeUID]>) {
-        // 非同期処理を行う
-        let uids:[SomeUID] = [SomeUID(uid:"hoge")]
-        report(uids: uids, callBack:callBack)
-    }
-    
-    return proc
+    return getUIDs
 }
 
 func getRecords(uids:[SomeUID]) -> Process<[SomeRecord]> {
-    func report(records:[SomeRecord], callBack:CallBack<[SomeRecord]>) {
-        callBack(records)
+    func gR(callBack:CallBack<[SomeRecord]>) -> Void{
+        getRecords(uids: uids, callBack: callBack)
     }
     
-    func proc(callBack:CallBack<[SomeRecord]>) {
-        // ここでuidを元にした(非同期)処理を行う。
-        let records:[SomeRecord] = [SomeRecord(title:"fuga")]
-        report(records: records, callBack:callBack)
-    }
-    
-    return proc
+    return gR
 }
 
 func getAllRecords() -> Process<[SomeRecord]> {
@@ -76,6 +78,14 @@ func getAllRecords() -> Process<[SomeRecord]> {
 (getAllRecords()) { records in
     print(records)
 }
+
+
+let proc = unit([SomeUID(uid:"X"), SomeUID(uid:"Y")]) >>= getRecords
+proc {records in
+    print(records)
+}
+
+
 
 // Environment Monad
 
@@ -264,6 +274,117 @@ print("re2(1) = \(re2(1))")
 print("re2(2) = \(re2(2))")
 print("re2(3) = \(re2(3))")
 
+
+
+
+import Foundation
+
+typealias CPSCallBack<R> = (R)->Void
+typealias CPSFunction<R> = (@escaping CPSCallBack<R>)->Void
+
+
+class ContMonad<R> {
+    
+    let cps: CPSFunction<R>
+    
+    init(cps:@escaping CPSFunction<R>) {
+        self.cps = cps
+    }
+    
+    func run(callBack:@escaping CPSCallBack<R>)->Void {
+        return cps(callBack)
+    }
+    
+    func fmap<T>(_ f:@escaping (R)->T) -> ContMonad<T>{
+        return self >>= {(r:R) in unit(f(r))}
+    }
+}
+
+class ContMonadCancel<R,S>: ContMonad<R> {
+    
+}
+
+
+func >>=<R,T>(left:ContMonad<R>, right:@escaping (R)->ContMonad<T>) -> ContMonad<T> {
+    
+    
+    let f = {(cb:@escaping CPSCallBack<T>) -> Void in
+         left.run(callBack:{r in
+            let c:ContMonad<T> = right(r)
+            c.run(callBack:{t in
+                cb(t)
+            })
+        })
+    }
+    
+    return ContMonad<T>(cps:f)
+}
+
+func unit<R>(_ x:R) -> ContMonad<R> {
+    
+    let cps:(CPSCallBack<R>)->Void = {(cb:CPSCallBack<R>)->Void in
+        return cb(x)
+    }
+    
+    return ContMonad<R>(cps:cps)
+}
+
+
+func fmap<R,T>(f:@escaping (R) -> T, m:ContMonad<R>) -> ContMonad<T> {
+    
+    return m >>= {(r:R) in unit(f(r))}
+}
+
+func fmap<R,T>(f:@escaping (R)->T) -> (ContMonad<R>) -> ContMonad<T> {
+    return {m in fmap(f:f, m:m)}
+}
+
+
+enum CPSResult<X>{
+    case just(X)
+    case error(Error)
+}
+
+
+
+
+func getRecordCont(uid:SomeUID?) -> ContMonad<CPSResult<SomeRecord>> {
+    return ContMonad{cb in
+        let cb_ = cb
+        DispatchQueue.global().async {
+            let r = SomeRecord(title: "\(uid?.uid) - record")
+            cb_(CPSResult.just(r))
+        }
+    }
+}
+
+func getUIDsCont()->ContMonad<CPSResult<SomeUID>> {
+    return ContMonad { cb in
+        DispatchQueue.global().async {
+            let r = SomeUID(uid: "PO")
+            cb(CPSResult.just(r))
+        }
+    }
+}
+
+func uidFromResult(_ r:CPSResult<SomeUID>) -> SomeUID? {
+    switch r {
+    case let .just(uid):
+        return uid
+    default:
+        return nil
+    }
+}
+
+
+var b = getUIDsCont().fmap(uidFromResult)
+let c = b >>= getRecordCont
+
+c.run { r in
+    print("ContMonad result = \(r)")
+}
+
+sleep(100)
 
 
 
